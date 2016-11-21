@@ -1,5 +1,14 @@
 import pandas as pd
 from syslogdiag.log import logtoscreen
+from syscore.objects import get_methods
+
+DEFAULT_CURRENCY = "USD"
+
+DEFAULT_DATES = pd.date_range(start=pd.datetime(
+    1970, 1, 1), freq="B", end=pd.datetime(2040, 12, 10))
+DEFAULT_RATE_SERIES = pd.Series(
+    [1.0] * len(DEFAULT_DATES), index=DEFAULT_DATES)
+
 
 class Data(object):
 
@@ -25,12 +34,15 @@ class Data(object):
         """
         Data socket base class
         """
-        ## this will normally be overriden by the base system
-        setattr(self, "log", logtoscreen( stage="data"))
+        # this will normally be overriden by the base system
+        setattr(self, "log", logtoscreen(stage="data"))
 
     def __repr__(self):
         return "Data object with %d instruments" % len(
             self.get_instrument_list())
+
+    def methods(self):
+        return get_methods(self)
 
     def daily_prices(self, instrument_code):
         """
@@ -39,15 +51,15 @@ class Data(object):
         :param instrument_code: Instrument to get prices for
         :type trading_rules: str
 
-        :returns: Tx1 pd.DataFrame
+        :returns: Tx1 pd.Series
 
         """
-        instrprice = self.get_daily_price(instrument_code)
+        instrprice = self.get_raw_price(instrument_code)
         dailyprice = instrprice.resample("1B", how="last")
 
         return dailyprice
 
-    def get_daily_price(self, instrument_code):
+    def get_raw_price(self, instrument_code):
         """
         Default method to get instrument price
         Will usually be overriden when inherited with specific data source
@@ -55,12 +67,11 @@ class Data(object):
         :param instrument_code: instrument to get prices for
         :type instrument_code: str
 
-        :returns: pd.DataFrame
+        :returns: pd.Series
 
         """
-        error_msg="You have created a Data() object; you might need to use a more specific data object" % instrument_code
+        error_msg = "You have created a Data() object; you might need to use a more specific data object" % instrument_code
         self.log.critical(error_msg)
-
 
     def __getitem__(self, keyname):
         """
@@ -71,7 +82,7 @@ class Data(object):
 
         :returns: pd.DataFrame
         """
-        price = self.get_daily_price(keyname)
+        price = self.get_raw_price(keyname)
 
         return price
 
@@ -110,6 +121,27 @@ class Data(object):
 
         return 1.0
 
+    def get_raw_cost_data(self, instrument_code):
+        """
+        Get cost data
+
+        Execution slippage [half spread] price units
+        Commission (local currency) per block
+        Commission - percentage of value (0.01 is 1%)
+        Commission (local currency) per block
+
+        :param instrument_code: instrument to value for
+        :type instrument_code: str
+
+        :returns: dict of floats
+
+        """
+
+        return dict(price_slippage=0.0,
+                    value_of_block_commission=0.0,
+                    percentage_cost=0.0,
+                    value_of_pertrade_commission=0.0)
+
     def _get_default_currency(self):
         """
         We assume we always have rates for the default currency vs others to use in getting cross rates
@@ -117,19 +149,25 @@ class Data(object):
 
         :returns: str
 
+
         """
-        DEFAULT_CURRENCY = "USD"
 
         return DEFAULT_CURRENCY
 
     def _get_default_series(self):
         """
         What we return if currency rates match
+
+        >>> data=Data()
+        >>> data._get_default_series().tail(5)
+        Expected:
+        2014-12-26   1
+        2014-12-29   1
+        2014-12-30   1
+        2014-12-31   1
+        2015-01-01   1
+        Freq: B, dtype: float64
         """
-        DEFAULT_DATES = pd.date_range(start=pd.datetime(
-            1970, 1, 1), end=pd.datetime(2050, 1, 1))
-        DEFAULT_RATE_SERIES = pd.DataFrame(
-            dict(fx=[1.0] * len(DEFAULT_DATES)), index=DEFAULT_DATES)
 
         return DEFAULT_RATE_SERIES
 
@@ -160,7 +198,7 @@ class Data(object):
         :param base_currency: instrument to value for
         :type instrument_code: str
 
-        :returns: Tx1 pd.DataFrame, or None if not found
+        :returns: Tx1 pd.Series, or None if not found
 
 
         """
@@ -181,9 +219,16 @@ class Data(object):
         :param base_currency: instrument to value for
         :type instrument_code: str
 
-        :returns: Tx1 pd.DataFrame
+        :returns: Tx1 pd.Series
 
-
+        >>> data=Data()
+        >>> data._get_fx_cross("USD", "USD").tail(5)
+        2014-12-26   1
+        2014-12-29   1
+        2014-12-30   1
+        2014-12-31   1
+        2015-01-01   1
+        Freq: B, dtype: float64
         """
 
         # try and get from raw data
@@ -193,15 +238,14 @@ class Data(object):
             # missing; have to get get cross rates
             default_currency = self._get_default_currency()
             currency1_vs_default = self._get_fx_data(
-                currency1, default_currency).resample("1B", how="last")
+                currency1, default_currency)
             currency2_vs_default = self._get_fx_data(
-                currency2, default_currency).resample("1B", how="last")
+                currency2, default_currency)
 
-            together = pd.concat(
-                [currency1_vs_default, currency2_vs_default], axis=1, join='inner').ffill()
+            (aligned_c1, aligned_c2) = currency1_vs_default.align(
+                currency2_vs_default, join="outer")
 
-            fx_rate_series = together.iloc[:, 0] / together.iloc[:, 1]
-            fx_rate_series = fx_rate_series.to_frame("fx")
+            fx_rate_series = aligned_c1.ffill() / aligned_c2.ffill()
 
         return fx_rate_series
 
@@ -215,13 +259,16 @@ class Data(object):
         :param base_currency: instrument to value for
         :type instrument_code: str
 
-        :returns: Tx1 pd.DataFrame
+        :returns: Tx1 pd.Series
 
         >>> data=Data()
-        >>> data.get_fx_for_instrument("wibble", "USD").tail(2)
-                    fx
-        2049-12-31   1
-        2050-01-01   1
+        >>> data.get_fx_for_instrument("wibble", "USD").tail(5)
+        2014-12-26    1
+        2014-12-29    1
+        2014-12-30    1
+        2014-12-31    1
+        2015-01-01    1
+        Freq: B, dtype: float64
         """
 
         instrument_currency = self.get_instrument_currency(instrument_code)

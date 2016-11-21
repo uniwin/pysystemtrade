@@ -1,7 +1,6 @@
 from systems.defaults import system_defaults
 from systems.stage import SystemStage
 from systems.basesystem import ALL_KEYNAME
-from syscore.pdutils import multiply_df_single_column, divide_df_single_column
 from syscore.dateutils import ROOT_BDAYS_INYEAR
 from syscore.algos import robust_vol_calc
 
@@ -45,6 +44,11 @@ class PositionSizing(SystemStage):
         setattr(self, "_protected", protected)
 
         setattr(self, "name", "positionSize")
+        setattr(self, "description", "")
+
+    def _system_init(self, system):
+        # method called once we have a system
+        setattr(self, "parent", system)
 
     def get_combined_forecast(self, instrument_code):
         """
@@ -101,20 +105,19 @@ class PositionSizing(SystemStage):
         2015-12-11  0.059724
         """
 
-        def _get_price_volatility(system, instrument_code):
+        def _get_price_volatility(system, instrument_code, this_stage_notused):
             if hasattr(system, "rawdata"):
                 daily_perc_vol = system.rawdata.get_daily_percentage_volatility(
                     instrument_code)
             else:
                 price = system.data.daily_prices(instrument_code)
                 return_vol = robust_vol_calc(price.diff())
-                daily_perc_vol = 100.0 * \
-                    divide_df_single_column(return_vol, price)
+                daily_perc_vol = 100.0 * return_vol / price
 
             return daily_perc_vol
 
         price_volatility = self.parent.calc_or_cache(
-            'get_price_volatility', instrument_code, _get_price_volatility)
+            'get_price_volatility', instrument_code, _get_price_volatility, self)
 
         return price_volatility
 
@@ -193,7 +196,7 @@ class PositionSizing(SystemStage):
         'GBP'
         >>>
         >>> ## from defaults
-        >>> config.delete("base_currency")
+        >>> del(config.base_currency)
         >>> system=System([rawdata, rules, fcs, comb, PositionSizing()], data, config)
         >>> system.positionSize.get_daily_cash_vol_target()['base_currency']
         'USD'
@@ -207,7 +210,7 @@ class PositionSizing(SystemStage):
             percentage_vol_target = float(system.config.percentage_vol_target)
 
             notional_trading_capital = float(
-                    system.config.notional_trading_capital)
+                system.config.notional_trading_capital)
 
             base_currency = system.config.base_currency
 
@@ -338,9 +341,10 @@ class PositionSizing(SystemStage):
             block_value = this_stage.get_block_value(instrument_code)
             daily_perc_vol = this_stage.get_price_volatility(instrument_code)
 
-            instr_ccy_vol = multiply_df_single_column(
-                block_value, daily_perc_vol, ffill=(True, False))
-            instr_ccy_vol.columns = ['icv']
+            (block_value, daily_perc_vol) = block_value.align(
+                daily_perc_vol, join="inner")
+
+            instr_ccy_vol = block_value * daily_perc_vol
 
             return instr_ccy_vol
 
@@ -363,15 +367,15 @@ class PositionSizing(SystemStage):
         >>> system=System([rawdata, rules, fcs, comb, PositionSizing()], data, config)
         >>>
         >>> system.positionSize.get_instrument_value_vol("EDOLLAR").tail(2)
-                         ivv
-        2015-12-09  88.52861
-        2015-12-10  89.38253
+                          ivv
+        2015-12-10  89.382530
+        2015-12-11  96.777975
         >>>
         >>> system2=System([rawdata, rules, fcs, comb, PositionSizing()], data, config)
         >>> system2.positionSize.get_instrument_value_vol("EDOLLAR").tail(2)
-                         ivv
-        2015-12-09  88.52861
-        2015-12-10  89.38253
+                          ivv
+        2015-12-10  89.382530
+        2015-12-11  96.777975
 
         """
         def _get_instrument_value_vol(system, instrument_code, this_stage):
@@ -383,9 +387,9 @@ class PositionSizing(SystemStage):
                 instrument_code)
             fx_rate = this_stage.get_fx_rate(instrument_code)
 
-            instr_value_vol = multiply_df_single_column(
-                instr_ccy_vol, fx_rate, ffill=(False, True))
-            instr_value_vol.columns = ['ivv']
+            (instr_ccy_vol, fx_rate) = instr_ccy_vol.align(fx_rate)
+
+            instr_value_vol = instr_ccy_vol * fx_rate
 
             return instr_value_vol
 
@@ -409,15 +413,15 @@ class PositionSizing(SystemStage):
         >>>
         >>> system.positionSize.get_volatility_scalar("EDOLLAR").tail(2)
                     vol_scalar
-        2015-12-09   11.295783
         2015-12-10   11.187869
+        2015-12-11   10.332930
         >>>
         >>> ## without raw data
         >>> system2=System([ rules, fcs, comb, PositionSizing()], data, config)
         >>> system2.positionSize.get_volatility_scalar("EDOLLAR").tail(2)
                     vol_scalar
-        2015-12-09   11.296937
         2015-12-10   11.180444
+        2015-12-11   10.344278
         """
         def _get_volatility_scalar(system, instrument_code, this_stage):
 
@@ -430,7 +434,6 @@ class PositionSizing(SystemStage):
                 'daily_cash_vol_target']
 
             vol_scalar = cash_vol_target / instr_value_vol
-            vol_scalar.columns = ['vol_scalar']
 
             return vol_scalar
 
@@ -456,14 +459,14 @@ class PositionSizing(SystemStage):
         >>>
         >>> system.positionSize.get_subsystem_position("EDOLLAR").tail(2)
                     ss_position
-        2015-12-09     2.722596
         2015-12-10     1.811465
+        2015-12-11     2.544598
         >>>
         >>> system2=System([rawdata, rules, fcs, comb, PositionSizing()], data, config)
         >>> system2.positionSize.get_subsystem_position("EDOLLAR").tail(2)
                     ss_position
-        2015-12-09     2.722596
         2015-12-10     1.811465
+        2015-12-11     2.544598
 
         """
         def _get_subsystem_position(system, instrument_code, this_stage):
@@ -479,9 +482,9 @@ class PositionSizing(SystemStage):
             vol_scalar = this_stage.get_volatility_scalar(instrument_code)
             forecast = this_stage.get_combined_forecast(instrument_code)
 
-            subsystem_position = multiply_df_single_column(
-                vol_scalar, forecast, ffill=(True, False)) / avg_abs_forecast
-            subsystem_position.columns = ['ss_position']
+            vol_scalar = vol_scalar.reindex(forecast.index).ffill()
+
+            subsystem_position = vol_scalar * forecast / avg_abs_forecast
 
             return subsystem_position
 

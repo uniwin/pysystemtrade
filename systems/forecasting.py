@@ -3,7 +3,8 @@ from copy import copy
 from systems.stage import SystemStage
 from syscore.objects import resolve_function, resolve_data_method, hasallattr
 
-DEFAULT_PRICE_SOURCE="data.daily_prices"
+DEFAULT_PRICE_SOURCE = "data.daily_prices"
+
 
 class Rules(SystemStage):
     """
@@ -46,12 +47,17 @@ class Rules(SystemStage):
 
         """
         setattr(self, "name", "rules")
+        setattr(self, "description", "")
 
         # We won't have trading rules we can use until we've parsed them
         setattr(self, "_trading_rules", None)
 
         # ... store the ones we've been passed for now
         setattr(self, "_passed_trading_rules", trading_rules)
+
+    def _system_init(self, system):
+        # method called once we have a system
+        setattr(self, "parent", system)
 
     def __repr__(self):
         trading_rules = self._trading_rules
@@ -89,15 +95,15 @@ class Rules(SystemStage):
             """
 
             if not hasattr(self, "parent"):
-                error_msg="A Rules stage needs to be part of a System to identify trading rules, unless rules are passed when object created"
+                error_msg = "A Rules stage needs to be part of a System to identify trading rules, unless rules are passed when object created"
                 self.log.critical(error_msg)
 
             if not hasattr(self.parent, "config"):
-                error_msg="A system needs to include a config with trading_rules, unless rules are passed when object created"
+                error_msg = "A system needs to include a config with trading_rules, unless rules are passed when object created"
                 self.log.critical(error_msg)
 
             if not hasattr(self.parent.config, "trading_rules"):
-                error_msg="A system config needs to include trading_rules, unless rules are passed when object created"
+                error_msg = "A system config needs to include trading_rules, unless rules are passed when object created"
                 self.log.critical(error_msg)
 
             # self.parent.config.tradingrules will already be in dictionary
@@ -125,7 +131,7 @@ class Rules(SystemStage):
         """
 
         def _get_raw_forecast(system, instrument_code,
-                          rule_variation_name, rules_stage):
+                              rule_variation_name, rules_stage):
             # This function gets called if we haven't cached the forecast
             rules_stage.log.msg("Calculating raw forecast %s for %s" % (instrument_code, rule_variation_name),
                                 instrument_code=instrument_code, rule_variation_name=rule_variation_name)

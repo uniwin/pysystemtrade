@@ -2,7 +2,6 @@ from systems.stage import SystemStage
 from copy import copy
 
 from syscore.objects import resolve_function
-from syscore.pdutils import divide_df_single_column
 
 
 class RawData(SystemStage):
@@ -10,7 +9,7 @@ class RawData(SystemStage):
     """
         A SystemStage that does some fairly common calculations before we do
         forecasting and which gives access to some widely used methods.
-         
+
             This is optional; forecasts can go straight to system.data
             The advantages of using RawData are:
                    - preliminary calculations that are reused can be cached, to
@@ -18,11 +17,9 @@ class RawData(SystemStage):
                    - preliminary calculations are available for inspection when
                      diagnosing what is going on
 
-    KEY INPUTS: system.data.get_daily_price(instrument_code)
-               found in self.get_daily_price
-
-               system.data.daily_prices(instrument_code)
+    KEY INPUTS: system.data.get_daily_prices(instrument_code)
                found in self.get_daily_prices
+
 
     KEY OUTPUTS: system.rawdata.... several
 
@@ -36,38 +33,11 @@ class RawData(SystemStage):
         """
 
         setattr(self, "name", "rawdata")
+        setattr(self, "description", "")
 
-    def get_daily_price(self, instrument_code):
-        """
-        Gets the instrument price from the parent system.data object
-
-        KEY INPUT
-
-        :param instrument_code: Instrument to get prices for
-        :type trading_rules: str
-
-        :returns: Tx1 pd.DataFrame
-
-        >>> from systems.tests.testdata import get_test_object
-        >>> from systems.basesystem import System
-        >>>
-        >>> (rawdata, data, config)=get_test_object()
-        >>> system=System([rawdata], data)
-        >>> system.rawdata.get_daily_price("EDOLLAR").tail(2)
-                               price
-        2015-12-11 17:08:14  97.9675
-        2015-12-11 19:33:39  97.9875
-        """
-        def _get_instrument_price(system, instrument_code):
-            instrprice = system.data.get_daily_price(instrument_code)
-            return instrprice
-
-        instrprice = self.parent.calc_or_cache("instrument_price",
-                                               instrument_code,
-                                               _get_instrument_price)
-
-        return instrprice
-
+    def _system_init(self, system):
+        # method called once we have a system
+        setattr(self, "parent", system)
 
     def get_daily_prices(self, instrument_code):
         """
@@ -81,7 +51,10 @@ class RawData(SystemStage):
         KEY OUTPUT
         """
         def _daily_prices(system, instrument_code, this_stage):
-            this_stage.log.msg("Calculating daily prices for %s" % instrument_code, instrument_code=instrument_code)
+            this_stage.log.msg(
+                "Calculating daily prices for %s" %
+                instrument_code,
+                instrument_code=instrument_code)
             dailyprice = system.data.daily_prices(instrument_code)
             return dailyprice
 
@@ -89,8 +62,6 @@ class RawData(SystemStage):
             "daily_price", instrument_code, _daily_prices, self)
 
         return dailyprice
-        
-
 
     def daily_denominator_price(self, instrument_code):
         """
@@ -203,11 +174,14 @@ class RawData(SystemStage):
 
         """
         def _daily_returns_volatility(system, instrument_code, this_stage):
-            this_stage.log.msg("Calculating daily volatility for %s" % instrument_code, instrument_code=instrument_code)
+            this_stage.log.msg(
+                "Calculating daily volatility for %s" %
+                instrument_code,
+                instrument_code=instrument_code)
 
             dailyreturns = this_stage.daily_returns(instrument_code)
 
-            volconfig=copy(system.config.volatility_calculation)
+            volconfig = copy(system.config.volatility_calculation)
 
             # volconfig contains 'func' and some other arguments
             # we turn func which could be a string into a function, and then
@@ -248,15 +222,16 @@ class RawData(SystemStage):
                 system, instrument_code, this_stage):
             denom_price = this_stage.daily_denominator_price(instrument_code)
             return_vol = this_stage.daily_returns_volatility(instrument_code)
+            (denom_price, return_vol) = denom_price.align(
+                return_vol, join="right")
             perc_vol = 100.0 * \
-                divide_df_single_column(return_vol, denom_price.shift(1))
+                (return_vol / denom_price.shift(1))
 
             return perc_vol
 
         perc_vol = self.parent.calc_or_cache(
             "daily_percentage_volatility", instrument_code, _get_daily_percentage_volatility, self)
         return perc_vol
-
 
     def norm_returns(self, instrument_code):
         """
@@ -281,13 +256,15 @@ class RawData(SystemStage):
         2015-12-11     1.985413
         """
         def _norm_returns(system, instrument_code, this_stage):
-            this_stage.log.msg("Calculating normalised prices for %s" % instrument_code, instrument_code=instrument_code)
+            this_stage.log.msg(
+                "Calculating normalised prices for %s" %
+                instrument_code,
+                instrument_code=instrument_code)
 
             returnvol = this_stage.daily_returns_volatility(
                 instrument_code).shift(1)
             dailyreturns = this_stage.daily_returns(instrument_code)
-            norm_return = divide_df_single_column(dailyreturns, returnvol)
-            norm_return.columns = ["norm_return"]
+            norm_return = dailyreturns / returnvol
             return norm_return
 
         norm_returns = self.parent.calc_or_cache(

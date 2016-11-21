@@ -41,9 +41,10 @@ class csvFuturesData(FuturesData):
 
         :returns: new csvFuturesData object
 
-        >>> data = csvFuturesData()
+        >>> data=csvFuturesData("sysdata.tests")
         >>> data
-        FuturesData object with 38 instruments
+        FuturesData object with 3 instruments
+
 
         """
 
@@ -58,10 +59,81 @@ class csvFuturesData(FuturesData):
         Here it's a directory
         """
         setattr(self, "_datapath", datapath)
-        
 
+    def _get_all_cost_data(self):
+        """
+        Get a data frame of cost data
 
-    def get_daily_price(self, instrument_code):
+        :returns: pd.DataFrame
+
+        >>> data=csvFuturesData("sysdata.tests")
+        >>> data._get_all_cost_data()
+                   Instrument  Slippage  PerBlock  Percentage  PerTrade
+        Instrument
+        BUND             BUND    0.0050      2.00           0         0
+        US10             US10    0.0080      1.51           0         0
+        EDOLLAR       EDOLLAR    0.0025      2.11           0         0
+        """
+
+        self.log.msg("Loading csv cost file")
+
+        filename = os.path.join(self._datapath, "costs_analysis.csv")
+        try:
+            instr_data = pd.read_csv(filename)
+            instr_data.index = instr_data.Instrument
+
+            return instr_data
+        except OSError:
+            self.log.warn("Cost file not found %s" % filename)
+            return None
+
+    def get_raw_cost_data(self, instrument_code):
+        """
+        Get's cost data for an instrument
+
+        Get cost data
+
+        Execution slippage [half spread] price units
+        Commission (local currency) per block
+        Commission - percentage of value (0.01 is 1%)
+        Commission (local currency) per block
+
+        :param instrument_code: instrument to value for
+        :type instrument_code: str
+
+        :returns: dict of floats
+
+        >>> data=csvFuturesData("sysdata.tests")
+        >>> data.get_raw_cost_data("EDOLLAR")['price_slippage']
+        0.0025000000000000001
+        """
+
+        default_costs = dict(price_slippage=0.0,
+                             value_of_block_commission=0.0,
+                             percentage_cost=0.0,
+                             value_of_pertrade_commission=0.0)
+
+        cost_data = self._get_all_cost_data()
+
+        if cost_data is None:
+            ##
+            return default_costs
+
+        try:
+            block_move_value = cost_data.loc[instrument_code, [
+                'Slippage', 'PerBlock', 'Percentage', 'PerTrade']]
+        except KeyError:
+            self.log.warn(
+                "Cost data not found for %s, using zero" %
+                instrument_code)
+            return default_costs
+
+        return dict(price_slippage=block_move_value[0],
+                    value_of_block_commission=block_move_value[1],
+                    percentage_cost=block_move_value[2],
+                    value_of_pertrade_commission=block_move_value[3])
+
+    def get_raw_price(self, instrument_code):
         """
         Get instrument price
 
@@ -71,22 +143,26 @@ class csvFuturesData(FuturesData):
         :returns: pd.DataFrame
 
         >>> data=csvFuturesData("sysdata.tests")
-        >>> data.get_daily_price("EDOLLAR").tail(2)
-                               price
-        2015-12-11 17:08:14  97.9675
-        2015-12-11 19:33:39  97.9875
+        >>> data.get_raw_price("EDOLLAR").tail(2)
+        2015-12-11 17:08:14    97.9675
+        2015-12-11 19:33:39    97.9875
+        Name: price, dtype: float64
         >>> data["US10"].tail(2)
-                                  price
-        2015-12-11 16:06:35  126.914062
-        2015-12-11 17:24:06  126.945312
+        2015-12-11 16:06:35    126.914062
+        2015-12-11 17:24:06    126.945312
+        Name: price, dtype: float64
         """
 
         # Read from .csv
-        self.log.msg("Loading csv data for %s" % instrument_code, instrument_code=instrument_code)
+        self.log.msg(
+            "Loading csv data for %s" %
+            instrument_code,
+            instrument_code=instrument_code)
         filename = os.path.join(self._datapath, instrument_code + "_price.csv")
         instrpricedata = pd_readcsv(filename)
         instrpricedata.columns = ["price"]
         instrpricedata = instrpricedata.groupby(level=0).last()
+        instrpricedata = pd.Series(instrpricedata.iloc[:, 0])
         return instrpricedata
 
     def get_instrument_raw_carry_data(self, instrument_code):
@@ -109,7 +185,10 @@ class csvFuturesData(FuturesData):
         2015-12-11 17:24:06  126.945312    NaN         201606         201603
         """
 
-        self.log.msg("Loading csv carry data for %s" % instrument_code, instrument_code=instrument_code)
+        self.log.msg(
+            "Loading csv carry data for %s" %
+            instrument_code,
+            instrument_code=instrument_code)
 
         filename = os.path.join(
             self._datapath, instrument_code + "_carrydata.csv")
@@ -132,7 +211,7 @@ class csvFuturesData(FuturesData):
         >>> data=csvFuturesData("sysdata.tests")
         >>> data._get_instrument_data()
                    Instrument  Pointsize AssetClass Currency
-        Instrument                                          
+        Instrument
         EDOLLAR       EDOLLAR       2500       STIR      USD
         US10             US10       1000       Bond      USD
         BUND             BUND       1000       Bond      EUR
@@ -230,16 +309,22 @@ class csvFuturesData(FuturesData):
 
         :returns: Tx1 pd.DataFrame, or None if not available
 
-        >>> data=csvFuturesData()
-        >>> # datapath="tests/"
+        >>> data=csvFuturesData("sysdata.tests")
         >>> data._get_fx_data("EUR", "USD").tail(2)
-                     EURUSD
-        2015-12-09  1.09085
-        2015-12-10  1.09641
+        2015-12-09    1.09085
+        2015-12-10    1.09641
+        Name: FX, dtype: float64
         >>> data._get_fx_cross("EUR", "GBP").tail(2)
-                          fx
-        2015-12-09  0.724663
-        2015-12-10  0.724463
+        2015-12-09    0.724663
+        2015-12-10    0.724463
+        Freq: B, Name: FX, dtype: float64
+        2015-12-09    0.664311
+        2015-12-10    0.660759
+        dtype: float64
+        >>> data._get_fx_cross( "GBP", "USD").tail(2)
+        2015-12-09    1.50532
+        2015-12-10    1.51341
+        Name: FX, dtype: float64
         """
 
         self.log.msg("Loading csv fx data", fx="%s%s" % (currency1, currency2))
@@ -254,7 +339,7 @@ class csvFuturesData(FuturesData):
         except:
             return None
 
-        fxdata.columns = ["%s%s" % (currency1, currency2)]
+        fxdata = pd.Series(fxdata.iloc[:, 0])
 
         return fxdata
 
